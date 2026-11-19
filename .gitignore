@@ -1,0 +1,33 @@
+# Build artifacts
+/target/
+**/target/
+
+# Ambiente e segredos (nunca comitar tokens, senhas ou chaves)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.sig
+*token*
+!crates/**/tokens.rs
+Settings.ini
+
+# Bancos locais, estados efêmeros e logs
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+logs/
+data/
+travas.json
+spot-*.json
+
+# Sistema e IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
