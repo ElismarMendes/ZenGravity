@@ -10,8 +10,13 @@ pub mod chat;
 pub mod clock;
 pub mod entities;
 pub mod game_title;
+pub mod glyphs;
+pub mod hp_pixel;
+pub mod hplock;
 pub mod lifecycle;
 pub mod map;
+pub mod petbar;
+pub mod ramlock;
 pub mod spots;
 pub mod telemetry;
 

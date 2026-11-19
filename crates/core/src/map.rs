@@ -1,11 +1,63 @@
-//! Mapas do MU Online (`WorldId`), grid 256×256 (`Terrain`), zonas seguras e Pathfinding A*.
+//!Mapas do MU Online (`WorldId`), descriptografia de `Data\WorldN\EncTerrainN.att`,
+//! grid 256×256 (`TerrainGrid`), zonas seguras, cálculo de distância BFS e Pathfinding A*.
 
 pub const MAP_SIZE: usize = 256;
 pub const ATTR_SAFEZONE: u8 = 0x01;
 pub const ATTR_NOMOVE: u8 = 0x04;
 pub const ATTR_NOGROUND: u8 = 0x08;
 
-/// Identificadores de mundos (WorldN) validados no cliente MU Online.
+/// Chave de 16 bytes do `MapFileDecrypt` do cliente MU Online (`ZzzLodTerrain.cpp` / `_crypt.h`).
+const TERRAIN_KEY: [u8; 16] = [
+    0xD1, 0x73, 0x52, 0xF6, 0xD2, 0x9A, 0xCB, 0x27, 0x3E, 0xAF, 0x59, 0x31, 0x37, 0xB3, 0xE7, 0xA2,
+];
+const BUX_KEY: [u8; 3] = [0xFC, 0xCF, 0xAB];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerrainParseError {
+    UnexpectedSize(usize),
+    InvalidHeader([u8; 4]),
+    UnknownWorld(u8),
+}
+
+impl std::fmt::Display for TerrainParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TerrainParseError::UnexpectedSize(n) => {
+                write!(
+                    f,
+                    "Tamanho inesperado de EncTerrain: {n} bytes (esperado 65540 ou 131076)"
+                )
+            }
+            TerrainParseError::InvalidHeader(h) => {
+                write!(
+                    f,
+                    "Cabeçalho inválido de EncTerrain: {h:?} (esperado [0, world, 255, 255])"
+                )
+            }
+            TerrainParseError::UnknownWorld(w) => {
+                write!(f, "WorldId {w} não mapeado na tabela principal")
+            }
+        }
+    }
+}
+
+fn decrypt_terrain_bytes(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut sub: u8 = 0x5E;
+    for (n, &c) in raw.iter().enumerate() {
+        let v = (TERRAIN_KEY[n % 16] ^ c).wrapping_sub(sub);
+        sub = c.wrapping_add(0x3D);
+        out.push(v ^ BUX_KEY[n % 3]);
+    }
+    out
+}
+
+/// Posição do mundo em float (lida da lista de objetos da RAM) convertida para coordenada de tile (`0..=255`).
+pub fn world_float_to_tile(v: f32) -> i32 {
+    (v / 100.0).floor() as i32
+}
+
+/// Identificadores de mundos (`WorldN`) validados no cliente MU Online.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WorldId {
@@ -102,13 +154,19 @@ impl WorldId {
         }
     }
 
-    /// Retângulo principal aproximado da Safe Zone para exibição no Mapa 2D.
+    /// Caminho relativo dentro da pasta `Data` do cliente (ex.: `World38\EncTerrain38.att`).
+    pub fn client_terrain_relative_path(self) -> String {
+        let n = self.code();
+        format!("World{n}\\EncTerrain{n}.att")
+    }
+
+    /// Retângulo principal aproximado da Safe Zone quando o `.att` não estiver carregado.
     pub fn safezone_bounds(self) -> Option<(i32, i32, i32, i32)> {
         match self {
             WorldId::Lorencia => Some((130, 118, 152, 138)),
             WorldId::Devias => Some((195, 32, 228, 68)),
             WorldId::Noria => Some((165, 90, 195, 122)),
-            WorldId::Kanturu => Some((16, 208, 42, 228)),
+            WorldId::Kanturu => Some((16, 202, 47, 213)),
             WorldId::Aida => Some((76, 8, 96, 24)),
             WorldId::Arena => Some((54, 110, 72, 128)),
             _ => None,
@@ -120,15 +178,38 @@ impl WorldId {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerrainGrid {
     pub world: WorldId,
+    pub raw_world_number: u8,
+    pub from_client_att: bool,
     tiles: Vec<u8>,
 }
 
 impl TerrainGrid {
-    /// Cria um terreno sintético base para um `WorldId`, com bordas bloqueadas,
-    /// safezone demarcada e obstáculos internos conhecidos para visualização e testes de rota.
+    /// Descriptografa e carrega um arquivo `Data\WorldN\EncTerrainN.att` real do cliente MU Online.
+    pub fn from_client_att_bytes(raw: &[u8]) -> Result<Self, TerrainParseError> {
+        let per_tile = match raw.len() {
+            65540 => 1,
+            131076 => 2,
+            n => return Err(TerrainParseError::UnexpectedSize(n)),
+        };
+        let dec = decrypt_terrain_bytes(raw);
+        let hdr = [dec[0], dec[1], dec[2], dec[3]];
+        if hdr[0] != 0 || hdr[2] != 255 || hdr[3] != 255 {
+            return Err(TerrainParseError::InvalidHeader(hdr));
+        }
+        let world_num = hdr[1];
+        let world = WorldId::from_code(world_num).unwrap_or(WorldId::Lorencia);
+        let tiles: Vec<u8> = dec[4..].chunks_exact(per_tile).map(|c| c[0]).collect();
+        Ok(Self {
+            world,
+            raw_world_number: world_num,
+            from_client_att: true,
+            tiles,
+        })
+    }
+
+    /// Cria um terreno sintético base para um `WorldId` caso o cliente não esteja presente no disco.
     pub fn synthetic_for(world: WorldId) -> Self {
         let mut tiles = vec![0u8; MAP_SIZE * MAP_SIZE];
-        // Bordas externas 0..4 e 251..256 sem chão
         for y in 0..MAP_SIZE {
             for x in 0..MAP_SIZE {
                 if !(4..251).contains(&x) || !(4..251).contains(&y) {
@@ -145,7 +226,6 @@ impl TerrainGrid {
                 }
             }
         }
-        // Parede decorativa interna para demonstrar desvio de obstáculos A*
         if world == WorldId::Kanturu {
             for x in 60..=110 {
                 tiles[180 * MAP_SIZE + x] |= ATTR_NOMOVE;
@@ -154,12 +234,22 @@ impl TerrainGrid {
                 tiles[y * MAP_SIZE + 145] |= ATTR_NOMOVE;
             }
         }
-        Self { world, tiles }
+        Self {
+            world,
+            raw_world_number: world.code(),
+            from_client_att: false,
+            tiles,
+        }
     }
 
     pub fn from_raw_tiles(world: WorldId, tiles: Vec<u8>) -> Self {
         assert_eq!(tiles.len(), MAP_SIZE * MAP_SIZE);
-        Self { world, tiles }
+        Self {
+            world,
+            raw_world_number: world.code(),
+            from_client_att: false,
+            tiles,
+        }
     }
 
     pub fn attr(&self, x: i32, y: i32) -> Option<u8> {
@@ -178,6 +268,13 @@ impl TerrainGrid {
         self.attr(x, y).is_some_and(|a| a & ATTR_SAFEZONE != 0)
     }
 
+    pub fn safe_tiles(&self) -> Vec<(i32, i32)> {
+        (0..MAP_SIZE * MAP_SIZE)
+            .filter(|i| self.tiles[*i] & ATTR_SAFEZONE != 0)
+            .map(|i| ((i % MAP_SIZE) as i32, (i / MAP_SIZE) as i32))
+            .collect()
+    }
+
     pub fn set_blocked(&mut self, x: i32, y: i32, blocked: bool) {
         if (0..MAP_SIZE as i32).contains(&x) && (0..MAP_SIZE as i32).contains(&y) {
             let idx = y as usize * MAP_SIZE + x as usize;
@@ -191,6 +288,20 @@ impl TerrainGrid {
 
     /// Calcula rota A* em 8 direções com heurística octile (sem cortar quinas de paredes).
     pub fn find_path(&self, from: (i32, i32), to: (i32, i32)) -> Option<Vec<(i32, i32)>> {
+        self.find_path_internal(from, to, false)
+    }
+
+    /// Rota de escape: permite diagonal entre quinas apenas quando `find_path` não tem saída.
+    pub fn find_path_escape(&self, from: (i32, i32), to: (i32, i32)) -> Option<Vec<(i32, i32)>> {
+        self.find_path_internal(from, to, true)
+    }
+
+    fn find_path_internal(
+        &self,
+        from: (i32, i32),
+        to: (i32, i32),
+        cut_corners: bool,
+    ) -> Option<Vec<(i32, i32)>> {
         use std::cmp::Reverse;
         use std::collections::BinaryHeap;
 
@@ -238,7 +349,8 @@ impl TerrainGrid {
                 if !self.is_walkable(nx, ny) {
                     continue;
                 }
-                if dx != 0
+                if !cut_corners
+                    && dx != 0
                     && dy != 0
                     && !(self.is_walkable(x + dx, y) && self.is_walkable(x, y + dy))
                 {
@@ -254,6 +366,41 @@ impl TerrainGrid {
         }
         None
     }
+
+    pub fn line_clear(&self, a: (i32, i32), b: (i32, i32)) -> bool {
+        let n = (b.0 - a.0).abs().max((b.1 - a.1).abs()).max(1);
+        (0..=n).all(|k| {
+            let x = a.0 as f32 + (b.0 - a.0) as f32 * k as f32 / n as f32;
+            let y = a.1 as f32 + (b.1 - a.1) as f32 * k as f32 / n as f32;
+            self.is_walkable(x.round() as i32, y.round() as i32)
+        })
+    }
+
+    pub fn waypoints(
+        &self,
+        from: (i32, i32),
+        path: &[(i32, i32)],
+        max_step: i32,
+    ) -> Vec<(i32, i32)> {
+        let mut out = Vec::new();
+        let mut cur = from;
+        let mut i = 0;
+        while i < path.len() {
+            let mut best = i;
+            for (j, &p) in path.iter().enumerate().skip(i) {
+                if (p.0 - cur.0).abs().max((p.1 - cur.1).abs()) > max_step {
+                    break;
+                }
+                if self.line_clear(cur, p) {
+                    best = j;
+                }
+            }
+            out.push(path[best]);
+            cur = path[best];
+            i = best + 1;
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -265,7 +412,6 @@ mod tests {
         let mut grid = TerrainGrid::from_raw_tiles(WorldId::Lorencia, vec![0; MAP_SIZE * MAP_SIZE]);
         grid.set_blocked(1, 0, true);
         grid.set_blocked(0, 1, true);
-        // Quina fechada em (1,0) e (0,1): não pode passar na diagonal (0,0) -> (1,1)
         assert_eq!(grid.find_path((0, 0), (1, 1)), None);
 
         let kanturu = TerrainGrid::synthetic_for(WorldId::Kanturu);
