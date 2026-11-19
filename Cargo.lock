@@ -3864,9 +3864,12 @@ dependencies = [
 name = "zengravity-agent"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "windows",
  "zengravity-core",
  "zengravity-protocol",
  "zengravity-test-support",
@@ -3885,6 +3888,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zengravity-agent",
  "zengravity-core",
  "zengravity-protocol",
  "zengravity-simulator",
@@ -3911,6 +3915,7 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tracing",
  "tracing-subscriber",
+ "zengravity-agent",
  "zengravity-central",
  "zengravity-core",
  "zengravity-protocol",

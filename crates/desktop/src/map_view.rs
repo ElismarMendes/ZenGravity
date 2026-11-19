@@ -15,9 +15,10 @@
 
 use crate::state::DesktopClientState;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2};
+use zengravity_agent::terrain_loader::ClientTerrainLoader;
 use zengravity_core::entities::EntityKind;
 use zengravity_core::lifecycle::CharLifecycleState;
-use zengravity_core::map::{TerrainGrid, WorldId, MAP_SIZE};
+use zengravity_core::map::{WorldId, MAP_SIZE};
 use zengravity_core::spots::{SpotCoord, SpotOccupancyStatus};
 use zengravity_core::OCCUPIED_RADIUS;
 
@@ -28,10 +29,12 @@ pub struct Map2DViewport {
     /// Centro do mapa em coordenadas de tile `(0..=255, 0..=255)`.
     pub center_tile: (f32, f32),
     pub show_grid: bool,
+    pub show_terrain_walls: bool,
     pub show_vision_radius: bool,
     pub show_routes: bool,
     pub show_entities: bool,
     pub hovered_tile: Option<(i32, i32)>,
+    pub terrain_loader: ClientTerrainLoader,
 }
 
 impl Default for Map2DViewport {
@@ -41,10 +44,12 @@ impl Default for Map2DViewport {
             zoom_px_per_tile: 2.6,
             center_tile: (128.0, 128.0),
             show_grid: true,
+            show_terrain_walls: true,
             show_vision_radius: true,
             show_routes: true,
             show_entities: true,
             hovered_tile: None,
+            terrain_loader: ClientTerrainLoader::discover(None),
         }
     }
 }
@@ -124,6 +129,7 @@ impl Map2DViewport {
 
             ui.separator();
             ui.checkbox(&mut self.show_grid, "Grid");
+            ui.checkbox(&mut self.show_terrain_walls, "Terreno (.att)");
             ui.checkbox(&mut self.show_vision_radius, "Raio de Visão Real (12t)");
             ui.checkbox(&mut self.show_routes, "Rotas A*");
             ui.checkbox(&mut self.show_entities, "Mobs/NPCs/Goldens");
@@ -200,50 +206,47 @@ impl Map2DViewport {
             }
         }
 
-        // Safezone conhecida do mapa
-        if let Some((sx0, sy0, sx1, sy1)) = self.selected_world.safezone_bounds() {
-            let s_min = self.tile_to_screen(rect, sx0 as f32, sy0 as f32);
-            let s_max = self.tile_to_screen(rect, sx1 as f32, sy1 as f32);
-            let s_rect = Rect::from_min_max(s_min, s_max);
-            painter.rect_filled(
-                s_rect,
-                3.0,
-                Color32::from_rgba_unmultiplied(35, 110, 75, 55),
-            );
-            painter.rect_stroke(
-                s_rect,
-                3.0,
-                Stroke::new(1.2_f32, Color32::from_rgb(60, 175, 115)),
-                egui::StrokeKind::Middle,
-            );
-            painter.text(
-                Pos2::new(s_rect.left() + 4.0, s_rect.top() + 3.0),
-                Align2::LEFT_TOP,
-                "SAFE ZONE",
-                FontId::proportional(10.5),
-                Color32::from_rgb(100, 225, 155),
-            );
+        // Renderiza o terreno real do arquivo Data\WorldN\EncTerrainN.att (ou sintético se ausente)
+        let terrain = self.terrain_loader.get_or_load(self.selected_world).clone();
+        if self.show_terrain_walls {
+            let step = if self.zoom_px_per_tile >= 3.0 { 1 } else { 2 };
+            let tile_px = (self.zoom_px_per_tile * step as f32).max(1.0);
+            for ty in (0..256).step_by(step) {
+                for tx in (0..256).step_by(step) {
+                    let pos = self.tile_to_screen(rect, tx as f32, ty as f32);
+                    if !rect.contains(pos) {
+                        continue;
+                    }
+                    let tile_rect = Rect::from_min_size(pos, Vec2::new(tile_px, tile_px));
+                    if terrain.is_safezone(tx, ty) {
+                        painter.rect_filled(
+                            tile_rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(35, 130, 85, 65),
+                        );
+                    } else if terrain.is_walkable(tx, ty) {
+                        painter.rect_filled(
+                            tile_rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(34, 46, 66, 95),
+                        );
+                    }
+                }
+            }
         }
 
-        // Obstáculos internos sintéticos para visualização do desvio A*
-        let terrain = TerrainGrid::synthetic_for(self.selected_world);
-        if self.selected_world == WorldId::Kanturu {
-            let w1_min = self.tile_to_screen(rect, 60.0, 179.5);
-            let w1_max = self.tile_to_screen(rect, 110.0, 181.0);
-            painter.rect_filled(
-                Rect::from_min_max(w1_min, w1_max),
-                1.0,
-                Color32::from_rgb(75, 55, 55),
-            );
-            let w2_min = self.tile_to_screen(rect, 144.5, 140.0);
-            let w2_max = self.tile_to_screen(rect, 146.0, 195.0);
-            painter.rect_filled(
-                Rect::from_min_max(w2_min, w2_max),
-                1.0,
-                Color32::from_rgb(75, 55, 55),
-            );
+        if let Some((sx0, sy0, _, _)) = self.selected_world.safezone_bounds() {
+            let s_pos = self.tile_to_screen(rect, sx0 as f32, sy0 as f32);
+            if rect.contains(s_pos) {
+                painter.text(
+                    Pos2::new(s_pos.x + 2.0, s_pos.y + 2.0),
+                    Align2::LEFT_TOP,
+                    "SAFE ZONE",
+                    FontId::proportional(10.5),
+                    Color32::from_rgb(100, 235, 160),
+                );
+            }
         }
-        let _ = terrain;
 
         let now_mono_s = state.central_mono_ms / 1000;
 

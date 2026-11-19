@@ -11,6 +11,11 @@ zengravity-protocol = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
 
 [dev-dependencies]
 zengravity-test-support = { workspace = true }

@@ -244,7 +244,7 @@ impl ZenGravityDesktopApp {
 
             ui.separator();
 
-            // Badge obrigatório MODO SIMULAÇÃO bem visível
+            // Badge obrigatório de Modo Operacional (Simulador vs Modo Real Somente Leitura)
             if self.state.simulation_mode {
                 egui::Frame::NONE
                     .fill(Color32::from_rgb(80, 52, 12))
@@ -256,6 +256,19 @@ impl ZenGravityDesktopApp {
                             RichText::new("⚡ MODO SIMULAÇÃO (4 PCs / 9 Personagens)")
                                 .strong()
                                 .color(Color32::from_rgb(255, 210, 95)),
+                        );
+                    });
+            } else {
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(16, 62, 55))
+                    .stroke(Stroke::new(1.5_f32, Color32::from_rgb(65, 225, 195)))
+                    .corner_radius(CornerRadius::same(5))
+                    .inner_margin(Margin::symmetric(10, 4))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("🛡 MODO REAL — SOMENTE LEITURA (MainMU.exe)")
+                                .strong()
+                                .color(Color32::from_rgb(125, 245, 220)),
                         );
                     });
             }
@@ -341,10 +354,26 @@ impl ZenGravityDesktopApp {
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
-                        RichText::new("Laboratório do Simulador:")
+                        RichText::new("Fonte de Telemetria:")
                             .strong()
                             .color(Color32::from_rgb(160, 185, 220)),
                     );
+
+                    let switch_label = if self.state.simulation_mode {
+                        "🛡 Mudar para MODO REAL (Ler MainMU.exe Somente Leitura)"
+                    } else {
+                        "⚡ Mudar para MODO SIMULAÇÃO (4 PCs / 9 Personagens)"
+                    };
+                    if ui.button(switch_label).clicked() {
+                        let want_live = self.state.simulation_mode;
+                        let _ =
+                            self.sim_ctrl_tx
+                                .try_send(SimControlAction::SetUseLiveWindowsSource {
+                                    use_live: want_live,
+                                });
+                    }
+
+                    ui.separator();
 
                     let pause_label = if self.sim_stream_paused {
                         "🔌 Reconectar Fluxo da Central (Sair de STALE)"
@@ -948,6 +977,13 @@ impl ZenGravityDesktopApp {
                             self.map_viewport.focus_on_spot(pos);
                             self.active_tab = ActiveTab::Map2D;
                         }
+                    }
+
+                    if ui.button("🔄 Recalibrar Trava RAM").clicked() {
+                        self.dispatch_command(Command::RelockTelemetry {
+                            machine_id: ch.machine_id.clone(),
+                            char_name: ch.name.clone(),
+                        });
                     }
                 });
 

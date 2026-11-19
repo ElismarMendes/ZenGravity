@@ -1,14 +1,19 @@
-//! Arquitetura base do Agente Windows (`zengravity-agent`).
+//! Arquitetura base e Leitores Somente-Leitura do Agente Windows (`zengravity-agent`).
 //!
-//! Implementa as garantias inegociáveis de segurança física por PC:
-//! 1. **Uma única sessão de entrada física (`InputSessionScheduler`) por PC**:
-//!    como existe apenas um teclado e um mouse físicos em cada máquina, duas contas
-//!    jamais podem enviar comandos ao mesmo tempo.
-//! 2. **Agendamento por prioridade**: tarefas de sobrevivência (ex.: morte/helper)
-//!    têm prioridade sobre tarefas de busca manual, que por sua vez têm prioridade
-//!    sobre tarefas de conveniência (Fortuna/Depósito).
-//! 3. **Parada de Emergência (`EmergencyStop` / F8)**: bloqueia instantaneamente
-//!    qualquer tentativa de automação e invalida sessões em andamento.
+//! Implementa:
+//! - `image`: quadro único `FrameImage` capturado por ciclo e recortado em memória.
+//! - `terrain_loader`: leitura somente-leitura de `Data\WorldN\EncTerrainN.att` do cliente instalado.
+//! - `win_reader` (Windows): enumeração de janelas (`The Classic MU Season 2`), `PrintWindow`,
+//!   `ReadProcessMemory` somente-leitura (`PROCESS_VM_READ`), lista de objetos `0x598` e tabela TCP.
+//! - `live_collector`: ciclo de telemetria passiva unificando captura única, modelos de pixel e
+//!   travas de RAM (`LockMachine` + `HpLock` + `DeathDetector`).
+//! - `InputSessionScheduler`: garantia de 1 única sessão física de teclado/mouse por PC e F8.
+
+pub mod image;
+pub mod live_collector;
+pub mod terrain_loader;
+#[cfg(windows)]
+pub mod win_reader;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

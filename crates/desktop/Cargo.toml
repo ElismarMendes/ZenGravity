@@ -13,6 +13,7 @@ path = "src/main.rs"
 zengravity-core = { workspace = true }
 zengravity-protocol = { workspace = true }
 zengravity-central = { workspace = true }
+zengravity-agent = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 tokio = { workspace = true }

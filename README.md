@@ -2,8 +2,11 @@
 
 **ZenGravity** é uma plataforma nativa do Windows para monitoramento em tempo real e coordenação operacional de múltiplos computadores (PCs) e múltiplos personagens de **MU Online**, com operação **Desktop-First** e **Offline-First**.
 
-> **Status Atual:** Fase 0 (Auditoria e Arquitetura) e Fase 1 (Painel Desktop Nativo `zengravity-desktop.exe` + Central Reativa + Simulador Reproduzível Multi-PC) concluídas.
-> **Aviso de Transparência:** Nesta Fase 1, toda a telemetria provém do **Simulador Reproduzível** (`zengravity-simulator`) trafegando pelo protocolo real e pela Central até o aplicativo Desktop. A leitura direta de processos reais do MU Online será instrumentada na Fase 2.
+> **Status Atual:**
+> - **Fase 0** (Auditoria e Arquitetura): Concluída.
+> - **Fase 1** (Painel Desktop Nativo `zengravity-desktop.exe` + Central Reativa + Simulador Multi-PC): Concluída.
+> - **Fase 2** (Leitores Reais do Windows em Modo Somente Leitura + Terrenos Reais `EncTerrain*.att` de `C:\The Classic Games\The Classic MU\Data` + 127 Fixtures Reais): Concluída.
+> - **Alternância Ao Vivo no Desktop:** o painel detecta automaticamente janelas `MainMU.exe` abertas na sessão do usuário e permite alternar com 1 clique no topo entre **`🛡 MODO REAL — SOMENTE LEITURA (MainMU.exe)`** e **`⚡ MODO SIMULAÇÃO (4 PCs / 9 Personagens)`**, sem enviar nenhum comando de mouse ou teclado ao jogo.
 
 ---
 

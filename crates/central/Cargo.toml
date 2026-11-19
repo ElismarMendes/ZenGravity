@@ -9,6 +9,7 @@ license.workspace = true
 zengravity-core = { workspace = true }
 zengravity-protocol = { workspace = true }
 zengravity-simulator = { workspace = true }
+zengravity-agent = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 futures-util = { workspace = true }

@@ -28,16 +28,15 @@ O desenvolvimento do **ZenGravity** é organizado em fases incrementais e verifi
 
 ---
 
-## Fase 2 — Leitores Reais do Windows (Somente Leitura e Diagnóstico Seguro)
-*Próxima fase recomendada (não executada ainda).*
-- [ ] Enumeração segura de janelas e processos do MU Online no Windows (`HWND`, `PID`, tempo de início do processo e parser de título).
-- [ ] Captura única por ciclo via `PrintWindow` com validação de integridade do quadro (rejeição de janelas minimizadas ou redimensionadas no meio da captura).
-- [ ] Leitura de mapa, coordenadas `(x, y)`, ícone do Helper e barra do Dark Raven por modelos de pixel calibrados com fixtures reais.
-- [ ] Máquina de trava de RAM somente leitura (`ReadProcessMemory`) para Zen (`u32`) e HP (`u16`) guiada por semente de OCR recortado (WinRT OCR), com persistência de travas por `(pid, process_start, char_name)`.
-- [ ] Leitura da lista de objetos próximos (`0x598` stride) e verificação de conexão TCP, exibindo tudo ao vivo no `zengravity-desktop.exe` com `MODO REAL (SOMENTE LEITURA)`.
+## Fase 2 — Leitores Reais do Windows (Somente Leitura e Diagnóstico Seguro) (Concluída nesta entrega)
+- [x] Enumeração segura de janelas e processos do MU Online no Windows (`HWND`, `PID`, tempo de início do processo, caminho do executável e parser de título EN/PT).
+- [x] Captura única por ciclo via `PrintWindow` (`FrameImage`) com validação de integridade do quadro (rejeição de janelas minimizadas ou redimensionadas no meio da captura) e recortes em memória.
+- [x] Leitura de mapa, coordenadas `(x, y)`, ícone do Helper, campo do Zen, número de HP e barra do Dark Raven por modelos de pixel calibrados com **127 fixtures reais do cliente**.
+- [x] Máquina de trava de RAM somente leitura (`ReadProcessMemory`, apenas `PROCESS_VM_READ`) para Zen (`u32`) e HP (`u16`) com persistência de travas por `(pid, process_start_time, char_name)` em `data/ram_locks.json`.
+- [x] Leitura da lista de objetos próximos (`0x598` stride: jogadores, monstros, NPCs e Golden Monsters) e verificação de conexão TCP, exibindo tudo ao vivo no `zengravity-desktop.exe` com **`🛡 MODO REAL — SOMENTE LEITURA (MainMU.exe)`** e carregamento direto dos terrenos `Data\WorldN\EncTerrainN.att` de `C:\The Classic Games\The Classic MU\Data`.
 
-## Fase 3 — Catálogo Coordenado de Spots e Mapa 2D com Terrenos do Cliente
-- [ ] Carregamento dos arquivos `Data\WorldN\EncTerrainN.att` locais do cliente no Mapa 2D nativo.
+## Fase 3 — Catálogo Coordenado de Spots e Atalhos F1/F2 no Jogo
+*Próxima fase recomendada (não executada ainda).*
 - [ ] Captura física dos atalhos `F1` (spot principal) e `F2` (catálogo) com janela em foco.
 - [ ] Persistência e sincronização multi-PC do diretório de spots, reservas (`leases`), `friendly_chars` e visualização de cobertura/ocupação real no Mapa 2D do desktop.
 

@@ -88,6 +88,14 @@ impl CentralHub {
         }
     }
 
+    /// Alterna entre o Simulador e a Leitura Real do Windows, limpando o estado da fonte anterior.
+    pub fn reset_for_source(&mut self, simulation_mode: bool) {
+        self.seq += 1;
+        self.simulation_mode = simulation_mode;
+        self.machines.clear();
+        self.spot_directory = SpotDirectory::default();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn push_event(
         &mut self,
@@ -131,9 +139,7 @@ impl CentralHub {
                 is_simulator,
                 ..
             } => {
-                if is_simulator {
-                    self.simulation_mode = true;
-                }
+                self.simulation_mode = is_simulator;
                 let entry =
                     self.machines
                         .entry(machine_id.clone())
