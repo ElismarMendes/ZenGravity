@@ -1,0 +1,15 @@
+[package]
+name = "zengravity-simulator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+zengravity-core = { workspace = true }
+zengravity-protocol = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+zengravity-test-support = { workspace = true }
