@@ -911,6 +911,52 @@ impl ZenGravityDesktopApp {
 
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
+                    let mut policy = ch.fallback_policy.clone();
+                    let mut changed = false;
+                    if ui
+                        .checkbox(&mut policy.enabled, "Fallback Ativo")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .checkbox(&mut policy.return_on_death, "Voltar após Morte")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .checkbox(&mut policy.spot_locked, "Travar Spot F1")
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if changed {
+                        self.dispatch_command(Command::UpdateFallbackPolicy {
+                            machine_id: ch.machine_id.clone(),
+                            char_name: ch.name.clone(),
+                            policy,
+                        });
+                    }
+                });
+
+                if let Some(pos) = ch.position.value {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("📌 Salvar Posição Atual como F1").clicked() {
+                            self.dispatch_command(Command::AssignHomeSpot {
+                                machine_id: ch.machine_id.clone(),
+                                char_name: ch.name.clone(),
+                                spot: pos,
+                            });
+                        }
+                        if ui.button("➕ Catalogar Posição Atual (F2)").clicked() {
+                            self.dispatch_command(Command::AddCatalogSpot { spot: pos });
+                        }
+                    });
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
                     egui::ComboBox::from_id_salt("manual_search_world_combo")
                         .selected_text(self.manual_search_world.name())
                         .show_ui(ui, |ui| {
@@ -1545,8 +1591,12 @@ impl eframe::App for ZenGravityDesktopApp {
             .show(ctx, |ui| match self.active_tab {
                 ActiveTab::Overview => self.render_overview_tab(ui),
                 ActiveTab::Map2D => {
-                    self.map_viewport
+                    let cmds = self
+                        .map_viewport
                         .ui(ui, &self.state, &mut self.selected_char);
+                    for cmd in cmds {
+                        self.dispatch_command(cmd);
+                    }
                 }
                 ActiveTab::EventsAndAlerts => self.render_events_and_alerts_tab(ui),
                 ActiveTab::MachinesHealth => self.render_machines_health_tab(ui),

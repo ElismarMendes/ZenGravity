@@ -160,6 +160,25 @@ impl WorldId {
         format!("World{n}\\EncTerrain{n}.att")
     }
 
+    /// Pontos de chegada conhecidos do teleporte pelo menu M quando o mapa não possui Safe Zone tradicional.
+    pub fn arrival_entry_tiles(self) -> &'static [(i32, i32)] {
+        match self {
+            WorldId::Dungeon => &[(108, 247), (233, 126), (3, 84)],
+            WorldId::LostTower => &[(208, 78), (86, 166), (42, 245)],
+            WorldId::Atlans => &[(22, 22)],
+            WorldId::Tarkan => &[(195, 65)],
+            WorldId::Icarus => &[(15, 13)],
+            WorldId::Arena => &[(62, 115)],
+            WorldId::Kanturu => &[(34, 217)],
+            WorldId::Lorencia => &[(138, 128)],
+            WorldId::Devias => &[(218, 63)],
+            WorldId::Noria => &[(175, 108)],
+            WorldId::Aida => &[(85, 14)],
+            WorldId::Crywolf => &[(120, 25)],
+            WorldId::ValleyOfLoren => &[(90, 40)],
+        }
+    }
+
     /// Retângulo principal aproximado da Safe Zone quando o `.att` não estiver carregado.
     pub fn safezone_bounds(self) -> Option<(i32, i32, i32, i32)> {
         match self {
@@ -273,6 +292,55 @@ impl TerrainGrid {
             .filter(|i| self.tiles[*i] & ATTR_SAFEZONE != 0)
             .map(|i| ((i % MAP_SIZE) as i32, (i / MAP_SIZE) as i32))
             .collect()
+    }
+
+    /// Calcula em passos a pé (8 direções, BFS) a distância de cada tile andável do mapa
+    /// até qualquer uma das origens em `sources` (ex.: `safe_tiles()` + `arrival_entry_tiles()`).
+    /// Tiles inalcançáveis recebem `u16::MAX`.
+    pub fn distances_from(&self, sources: &[(i32, i32)]) -> Vec<u16> {
+        let mut dist = vec![u16::MAX; MAP_SIZE * MAP_SIZE];
+        let mut queue = std::collections::VecDeque::new();
+        for &(x, y) in sources {
+            if self.attr(x, y).is_some() {
+                let idx = y as usize * MAP_SIZE + x as usize;
+                if dist[idx] != 0 {
+                    dist[idx] = 0;
+                    queue.push_back((x, y));
+                }
+            }
+        }
+        while let Some((x, y)) = queue.pop_front() {
+            let d = dist[y as usize * MAP_SIZE + x as usize];
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if (dx, dy) == (0, 0) || !self.is_walkable(nx, ny) {
+                        continue;
+                    }
+                    let i = ny as usize * MAP_SIZE + nx as usize;
+                    if dist[i] == u16::MAX {
+                        dist[i] = d.saturating_add(1);
+                        queue.push_back((nx, ny));
+                    }
+                }
+            }
+        }
+        dist
+    }
+
+    /// Distância a pé (BFS) da entrada/Safe Zone do mapa até o tile `(x, y)`.
+    pub fn walking_distance_from_entry(&self, x: i32, y: i32) -> Option<u32> {
+        if !(0..MAP_SIZE as i32).contains(&x) || !(0..MAP_SIZE as i32).contains(&y) {
+            return None;
+        }
+        let mut sources = self.safe_tiles();
+        sources.extend_from_slice(self.world.arrival_entry_tiles());
+        if sources.is_empty() {
+            return None;
+        }
+        let dists = self.distances_from(&sources);
+        let d = dists[y as usize * MAP_SIZE + x as usize];
+        (d != u16::MAX).then_some(u32::from(d))
     }
 
     pub fn set_blocked(&mut self, x: i32, y: i32, blocked: bool) {

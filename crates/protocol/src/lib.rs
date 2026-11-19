@@ -106,6 +106,14 @@ pub enum AgentToCentral {
         machine_id: String,
         sent_at_mono_ms: MonotonicMs,
     },
+    /// Atalho F1 ou F2 capturado fisicamente com a janela do jogo em primeiro plano.
+    HotkeySpotCaptured {
+        machine_id: String,
+        char_name: String,
+        spot: SpotCoord,
+        /// `true` = F1 (define Spot Principal e inclui no catálogo); `false` = F2 (apenas cataloga).
+        make_home_spot: bool,
+    },
 }
 
 /// Lista fechada de comandos operacionais autorizados (sem shell arbitrário).
@@ -154,6 +162,14 @@ pub enum Command {
     },
     /// Habilita ou desabilita um spot no catálogo compartilhado.
     SetCatalogSpotEnabled { spot: SpotCoord, enabled: bool },
+    /// Adiciona um novo spot ao catálogo (via F2 ou clique no Mapa 2D).
+    AddCatalogSpot { spot: SpotCoord },
+    /// Remove um spot do catálogo compartilhado.
+    RemoveCatalogSpot { spot: SpotCoord },
+    /// Adiciona um personagem à lista de aliados (`friendly_chars`).
+    AddFriendlyChar { char_name: String },
+    /// Remove um personagem da lista de aliados (`friendly_chars`).
+    RemoveFriendlyChar { char_name: String },
     /// Solicita relock de leitura de RAM (Zen/HP) do personagem.
     RelockTelemetry {
         machine_id: String,
@@ -209,6 +225,18 @@ impl Command {
                 spot.label(),
                 if *enabled { "Ativado" } else { "Desativado" }
             ),
+            Command::AddCatalogSpot { spot } => {
+                format!("Spot {} catalogado (F2)", spot.label())
+            }
+            Command::RemoveCatalogSpot { spot } => {
+                format!("Spot {} removido do catálogo", spot.label())
+            }
+            Command::AddFriendlyChar { char_name } => {
+                format!("Personagem aliado adicionado: {char_name}")
+            }
+            Command::RemoveFriendlyChar { char_name } => {
+                format!("Personagem aliado removido: {char_name}")
+            }
             Command::RelockTelemetry { char_name, .. } => {
                 format!("Recalibração de leitura solicitada para {char_name}")
             }

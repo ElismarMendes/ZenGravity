@@ -20,10 +20,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc, Mutex};
+use zengravity_agent::hotkey_watcher::{spawn_passive_hotkey_watcher, SpotHotkeyKind};
 use zengravity_agent::live_collector::{ReadOnlyLiveCollector, Win32ReadOnlyAccess};
 use zengravity_agent::win_reader::{discover_game_windows, DEFAULT_WINDOW_CLASS};
 use zengravity_core::alerts::AlertConfig;
-use zengravity_protocol::{CentralToPanel, Command, EventSeverity, PanelToCentral};
+use zengravity_protocol::{AgentToCentral, CentralToPanel, Command, EventSeverity, PanelToCentral};
 use zengravity_simulator::SimulatorEngine;
 
 /// Comandos de controle da Central (troca de fonte Real vs Simulador, injeção de falhas no simulador e comandos do operador).
@@ -80,7 +81,9 @@ pub async fn spawn_central_with_simulator(
         ReadOnlyLiveCollector::new(&machine_name, Some(PathBuf::from("data/ram_locks.json")));
     let win_access = Win32ReadOnlyAccess::default();
 
+    let spots_dir_path = PathBuf::from("data/spots_directory.json");
     let mut hub = CentralHub::new(!use_live, AlertConfig::default());
+    hub.load_persisted_spot_directory(&spots_dir_path);
 
     if use_live {
         hub.apply_agent_message(live_collector.hello_message(), 100, now_utc);
@@ -94,6 +97,9 @@ pub async fn spawn_central_with_simulator(
             hub.apply_agent_message(rep, 500, now_utc);
         }
     }
+    hub.save_persisted_spot_directory(&spots_dir_path);
+
+    let hotkey_rx = spawn_passive_hotkey_watcher();
 
     let shared_hub = Arc::new(Mutex::new(hub));
     let (panel_tx, _) = broadcast::channel::<CentralToPanel>(128);
@@ -135,11 +141,29 @@ pub async fn spawn_central_with_simulator(
                     let mono_ms = start_instant.elapsed().as_millis() as u64;
                     let utc_s = CentralRuntimeHandle::now_utc_s();
 
-                    let reports = if use_live {
+                    // Processa atalhos físicos F1 / F2 capturados com o jogo em primeiro plano
+                    let mut hotkey_messages = Vec::new();
+                    while let Ok(hk) = hotkey_rx.try_recv() {
+                        if let (Some(char_name), Some(spot)) = (hk.char_name, hk.captured_spot) {
+                            let make_home = hk.kind == SpotHotkeyKind::AssignHomeSpotF1;
+                            if make_home {
+                                let _ = live_collector.assign_home_spot(&char_name, spot);
+                            }
+                            hotkey_messages.push(AgentToCentral::HotkeySpotCaptured {
+                                machine_id: live_collector.machine_id.clone(),
+                                char_name,
+                                spot,
+                                make_home_spot: make_home,
+                            });
+                        }
+                    }
+
+                    let mut reports = if use_live {
                         vec![live_collector.collect_cycle(&win_access, mono_ms, utc_s)]
                     } else {
                         sim.step(mono_ms, utc_s)
                     };
+                    reports.extend(hotkey_messages);
 
                     let mut effects_to_save = Vec::new();
                     {
@@ -217,24 +241,28 @@ pub async fn spawn_central_with_simulator(
                             }
                         }
                         SimControlAction::OperatorCommand { command_id, command } => {
-                            let (ok, msg) = if use_live {
+                            let (sim_ok, sim_msg) = if use_live {
                                 match &command {
                                     Command::RelockTelemetry { char_name, .. } => {
                                         let found = live_collector.relock_character(char_name);
                                         (found, format!("Travas de RAM resetadas para {char_name} (abra o inventário V para nova semente)"))
                                     }
                                     Command::AssignHomeSpot { char_name, spot, .. } => {
-                                        let found = live_collector.assign_home_spot(char_name, *spot);
-                                        (found, command.summary_pt())
+                                        let _ = live_collector.assign_home_spot(char_name, *spot);
+                                        (true, command.summary_pt())
                                     }
-                                    _ => (true, format!("{} (Modo Somente Leitura ativo)", command.summary_pt())),
+                                    _ => (true, command.summary_pt()),
                                 }
                             } else {
                                 sim.apply_command(&command)
                             };
                             let _ = db.record_audit(utc_s, "desktop-operator", &command.summary_pt()).await;
                             let mut hub_guard = loop_hub.lock().await;
-                            let _ = hub_guard.handle_operator_command(&command, mono_ms, utc_s);
+                            let (ok, msg) = match hub_guard.handle_operator_command(&command, mono_ms, utc_s) {
+                                Ok(hub_msg) => (sim_ok, if sim_ok { hub_msg } else { sim_msg }),
+                                Err(err_msg) => (false, err_msg),
+                            };
+                            hub_guard.save_persisted_spot_directory(&spots_dir_path);
                             let _ = loop_tx.send(CentralToPanel::CommandAck {
                                 command_id,
                                 accepted: ok,

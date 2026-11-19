@@ -173,17 +173,48 @@ impl SpotDirectory {
     }
 
     pub fn add_catalog_spot(&mut self, spot: SpotCoord, priority: u32, machine: &str) {
+        let _ = self.try_add_catalog_spot(spot, priority, machine);
+    }
+
+    /// Tenta catalogar um spot (F2 ou clique no Mapa 2D), garantindo que:
+    /// 1. Não é em Lorencia (cidade sem spots de farm);
+    /// 2. Se já existir a até `ARRIVAL_RADIUS` (2 tiles), atualiza/mantém a entrada;
+    /// 3. Se estiver entre `3..=OWN_SPACING` (8 tiles) de outro spot catalogado no mesmo mapa,
+    ///    recusa para evitar KS mútuo entre helpers do nosso grupo.
+    pub fn try_add_catalog_spot(
+        &mut self,
+        spot: SpotCoord,
+        priority: u32,
+        machine: &str,
+    ) -> Result<usize, String> {
         if !spot.is_valid() {
-            return;
+            return Err("Coordenada fora dos limites 0..=255".into());
         }
-        // Evita duplicar spots a até ARRIVAL_RADIUS (2 tiles)
-        if let Some(existing) = self
+        if spot.world == WorldId::Lorencia {
+            return Err(
+                "Lorencia é cidade: spots de farm só são permitidos em mapas de caça".into(),
+            );
+        }
+        if let Some((idx, existing)) = self
             .catalog
             .iter_mut()
-            .find(|c| c.spot.is_near(spot, ARRIVAL_RADIUS))
+            .enumerate()
+            .find(|(_, c)| c.spot.is_near(spot, ARRIVAL_RADIUS))
         {
             existing.priority = existing.priority.min(priority);
-            return;
+            return Ok(idx + 1);
+        }
+        if let Some(conflict) = self
+            .catalog
+            .iter()
+            .find(|c| c.spot.is_near(spot, OWN_SPACING))
+        {
+            return Err(format!(
+                "Spot {} muito próximo de {} (mínimo de {} tiles entre spots para não disputar mobs)",
+                spot.label(),
+                conflict.spot.label(),
+                OWN_SPACING + 1
+            ));
         }
         self.catalog.push(CatalogEntry {
             spot,
@@ -193,6 +224,37 @@ impl SpotDirectory {
         });
         self.catalog
             .sort_by_key(|c| (c.spot.world.code(), c.priority, c.spot.x, c.spot.y));
+        Ok(self.catalog.len())
+    }
+
+    pub fn remove_catalog_spot(&mut self, spot: SpotCoord) -> bool {
+        let before = self.catalog.len();
+        self.catalog
+            .retain(|c| !c.spot.is_near(spot, ARRIVAL_RADIUS));
+        self.catalog.len() < before
+    }
+
+    pub fn add_friendly_char(&mut self, name: &str) -> Result<(), String> {
+        let cleaned = crate::sanitize_text(name, 16);
+        if cleaned.is_empty() || cleaned.contains(' ') {
+            return Err("Nome de personagem aliado inválido".into());
+        }
+        if !self
+            .friendly_chars
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(&cleaned))
+        {
+            self.friendly_chars.push(cleaned);
+            self.friendly_chars.sort();
+        }
+        Ok(())
+    }
+
+    pub fn remove_friendly_char(&mut self, name: &str) -> bool {
+        let before = self.friendly_chars.len();
+        self.friendly_chars
+            .retain(|f| !f.eq_ignore_ascii_case(name.trim()));
+        self.friendly_chars.len() < before
     }
 
     /// Verifica se algum outro personagem nosso já é dono ou reservou um spot a menos de `OWN_SPACING` (8 tiles).
@@ -320,6 +382,74 @@ impl SpotDirectory {
         }
         order
     }
+
+    /// Calcula a ordem de busca de spots priorizando os mais próximos a pé da Safe Zone / entrada do mapa
+    /// (usando `walking_dist(spot)` calculado no `TerrainGrid` real `EncTerrainN.att`),
+    /// seguidos pelo spot alternativo ativo atual (`current_alt`) e pelos mapas secundários configurados.
+    pub fn ranked_search_order(
+        &self,
+        home: SpotCoord,
+        current_alt: Option<SpotCoord>,
+        policy: &FallbackPolicy,
+        walking_dist: &dyn Fn(SpotCoord) -> Option<u32>,
+    ) -> Vec<SpotCoord> {
+        let mut order = vec![home];
+        if policy.spot_locked {
+            return order;
+        }
+        let mut primary_candidates: Vec<&CatalogEntry> = self
+            .catalog
+            .iter()
+            .filter(|c| c.enabled && c.spot.world == home.world)
+            .collect();
+        primary_candidates.sort_by_key(|c| {
+            (
+                walking_dist(c.spot).unwrap_or(u32::MAX),
+                c.priority,
+                c.spot.x,
+                c.spot.y,
+            )
+        });
+        for c in primary_candidates {
+            if !order.iter().any(|s| s.is_near(c.spot, ARRIVAL_RADIUS)) {
+                order.push(c.spot);
+            }
+        }
+
+        if policy.enabled {
+            if let Some(alt) =
+                current_alt.filter(|a| a.world != home.world && a.world != WorldId::Lorencia)
+            {
+                if !order.iter().any(|s| s.is_near(alt, ARRIVAL_RADIUS)) {
+                    order.push(alt);
+                }
+            }
+            for &w in &policy.secondary_worlds {
+                if w == home.world || w == WorldId::Lorencia {
+                    continue;
+                }
+                let mut sec: Vec<&CatalogEntry> = self
+                    .catalog
+                    .iter()
+                    .filter(|c| c.enabled && c.spot.world == w)
+                    .collect();
+                sec.sort_by_key(|c| {
+                    (
+                        walking_dist(c.spot).unwrap_or(u32::MAX),
+                        c.priority,
+                        c.spot.x,
+                        c.spot.y,
+                    )
+                });
+                for c in sec {
+                    if !order.iter().any(|s| s.is_near(c.spot, ARRIVAL_RADIUS)) {
+                        order.push(c.spot);
+                    }
+                }
+            }
+        }
+        order
+    }
 }
 
 /// Verifica jogadores externos próximos a `spot` a partir de uma leitura real de entidades.
@@ -364,5 +494,60 @@ mod tests {
             SpotOccupancyStatus::Unobserved
         );
         assert!(inspect_foreign_occupants(None, unobserved, "x9901", |_| false).is_err());
+    }
+
+    #[test]
+    fn catalog_rejects_lorencia_and_close_spots_and_ranks_by_walking_distance() {
+        let mut dir = SpotDirectory::default();
+        // Lorencia é cidade: proibido catalogar spot de farm
+        assert!(dir
+            .try_add_catalog_spot(SpotCoord::new(WorldId::Lorencia, 130, 125), 0, "PC1")
+            .is_err());
+
+        // Primeiro spot em Kanturu (90, 66)
+        assert_eq!(
+            dir.try_add_catalog_spot(SpotCoord::new(WorldId::Kanturu, 90, 66), 0, "PC1")
+                .unwrap(),
+            1
+        );
+        // Spot a 1 tile (91, 66) é considerado o mesmo spot (ARRIVAL_RADIUS = 2): atualiza/mantém #1
+        assert_eq!(
+            dir.try_add_catalog_spot(SpotCoord::new(WorldId::Kanturu, 91, 66), 1, "PC1")
+                .unwrap(),
+            1
+        );
+        // Spot a 5 tiles (95, 66) está dentro de OWN_SPACING (8 tiles): recusado para evitar KS
+        assert!(dir
+            .try_add_catalog_spot(SpotCoord::new(WorldId::Kanturu, 95, 66), 2, "PC1")
+            .is_err());
+
+        // Outros spots bem espaçados em Kanturu e Arena
+        dir.try_add_catalog_spot(SpotCoord::new(WorldId::Kanturu, 40, 232), 5, "PC1")
+            .unwrap();
+        dir.try_add_catalog_spot(SpotCoord::new(WorldId::Arena, 47, 70), 0, "PC2")
+            .unwrap();
+
+        let home = SpotCoord::new(WorldId::Kanturu, 160, 197);
+        let policy = FallbackPolicy::default();
+        // Distância simulada: (40,232) está a 13 passos da safe; (90,66) está a 433 passos
+        let order = dir.ranked_search_order(home, None, &policy, &|sp| match (sp.x, sp.y) {
+            (40, 232) => Some(13),
+            (90, 66) => Some(433),
+            _ => Some(50),
+        });
+        assert_eq!(
+            order,
+            vec![
+                home,
+                SpotCoord::new(WorldId::Kanturu, 40, 232),
+                SpotCoord::new(WorldId::Kanturu, 90, 66),
+                SpotCoord::new(WorldId::Arena, 47, 70),
+            ]
+        );
+
+        dir.add_friendly_char("Amigo1").unwrap();
+        assert!(dir.is_friendly("amigo1"));
+        assert!(dir.remove_friendly_char("AMIGO1"));
+        assert!(!dir.is_friendly("Amigo1"));
     }
 }

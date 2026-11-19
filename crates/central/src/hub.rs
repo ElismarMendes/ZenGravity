@@ -88,12 +88,35 @@ impl CentralHub {
         }
     }
 
-    /// Alterna entre o Simulador e a Leitura Real do Windows, limpando o estado da fonte anterior.
+    pub fn load_persisted_spot_directory(&mut self, path: &std::path::Path) {
+        if let Ok(txt) = std::fs::read_to_string(path) {
+            if let Ok(saved) = serde_json::from_str::<SpotDirectory>(&txt) {
+                self.spot_directory.catalog = saved.catalog;
+                self.spot_directory.friendly_chars = saved.friendly_chars;
+            }
+        }
+    }
+
+    pub fn save_persisted_spot_directory(&self, path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp = path.with_extension("json.tmp");
+        if let Ok(json) = serde_json::to_string_pretty(&self.spot_directory) {
+            if std::fs::write(&tmp, json).is_ok() {
+                let _ = std::fs::rename(&tmp, path);
+            }
+        }
+    }
+
+    /// Alterna entre o Simulador e a Leitura Real do Windows, preservando o catálogo e aliados salvos.
     pub fn reset_for_source(&mut self, simulation_mode: bool) {
         self.seq += 1;
         self.simulation_mode = simulation_mode;
         self.machines.clear();
-        self.spot_directory = SpotDirectory::default();
+        self.spot_directory.members.clear();
+        self.spot_directory.leases.clear();
+        self.spot_directory.observations.clear();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -470,6 +493,96 @@ impl CentralHub {
                 }
                 (None, effects)
             }
+            AgentToCentral::HotkeySpotCaptured {
+                machine_id,
+                char_name,
+                spot,
+                make_home_spot,
+            } => {
+                let now_mono_s = now_mono_ms / 1000;
+                let next_prio = self.spot_directory.catalog.len() as u32;
+                let res = if make_home_spot {
+                    self.spot_directory
+                        .try_reserve(&machine_id, &char_name, spot, now_mono_s)
+                        .and_then(|()| {
+                            let idx = self.spot_directory.try_add_catalog_spot(
+                                spot,
+                                next_prio,
+                                &machine_id,
+                            )?;
+                            self.spot_directory.register_member(
+                                &machine_id,
+                                &char_name,
+                                Some(spot),
+                                Some(spot),
+                            );
+                            if let Some(m) = self.machines.get_mut(&machine_id) {
+                                if let Some(c) = m.chars.get_mut(&char_name) {
+                                    c.last_report.home_spot = Some(spot);
+                                    c.last_report.active_spot = Some(spot);
+                                }
+                            }
+                            Ok(format!(
+                                "F1 ({char_name}): Spot principal #{idx} salvo e catalogado em {}",
+                                spot.label()
+                            ))
+                        })
+                } else {
+                    self.spot_directory
+                        .try_add_catalog_spot(spot, next_prio, &machine_id)
+                        .map(|idx| {
+                            format!(
+                                "F2 ({char_name}): Spot #{idx} catalogado em {} (F1 anterior preservado)",
+                                spot.label()
+                            )
+                        })
+                };
+
+                let (sev, title, detail) = match res {
+                    Ok(msg) => (
+                        EventSeverity::Info,
+                        if make_home_spot {
+                            "Atalho F1 (Spot Principal)".to_string()
+                        } else {
+                            "Atalho F2 (Catálogo)".to_string()
+                        },
+                        msg,
+                    ),
+                    Err(err) => (
+                        EventSeverity::Warning,
+                        if make_home_spot {
+                            "Atalho F1 Recusado".to_string()
+                        } else {
+                            "Atalho F2 Recusado".to_string()
+                        },
+                        err,
+                    ),
+                };
+
+                new_events.push(self.push_event(
+                    now_mono_ms,
+                    now_utc_s,
+                    sev,
+                    &machine_id,
+                    Some(char_name),
+                    title,
+                    detail,
+                ));
+                self.seq += 1;
+                let updated_characters =
+                    self.build_characters_for_machine(&machine_id, now_mono_ms);
+                let delta = PanelDelta {
+                    seq: self.seq,
+                    central_mono_ms: now_mono_ms,
+                    central_utc_s: now_utc_s,
+                    emergency_stop_global: self.emergency_stop_global,
+                    updated_machines: Vec::new(),
+                    updated_characters,
+                    spot_directory: Some(self.spot_directory.clone()),
+                    new_events,
+                };
+                (Some(delta), effects)
+            }
         }
     }
 
@@ -478,7 +591,8 @@ impl CentralHub {
         cmd: &Command,
         now_mono_ms: MonotonicMs,
         now_utc_s: UtcTimestampSecs,
-    ) -> PanelEventLog {
+    ) -> Result<String, String> {
+        let mut custom_msg = None;
         match cmd {
             Command::TriggerEmergencyStop { machine_id: None } => {
                 self.emergency_stop_global = true;
@@ -493,6 +607,46 @@ impl CentralHub {
                     }
                 }
             }
+            Command::AddCatalogSpot { spot } => {
+                let prio = self.spot_directory.catalog.len() as u32;
+                let idx =
+                    self.spot_directory
+                        .try_add_catalog_spot(*spot, prio, "PAINEL-DESKTOP")?;
+                custom_msg = Some(format!("Spot #{idx} catalogado em {}", spot.label()));
+            }
+            Command::RemoveCatalogSpot { spot } => {
+                if !self.spot_directory.remove_catalog_spot(*spot) {
+                    return Err(format!("Spot {} não estava no catálogo", spot.label()));
+                }
+            }
+            Command::AssignHomeSpot {
+                machine_id,
+                char_name,
+                spot,
+            } => {
+                self.spot_directory.try_reserve(
+                    machine_id,
+                    char_name,
+                    *spot,
+                    now_mono_ms / 1000,
+                )?;
+                let prio = self.spot_directory.catalog.len() as u32;
+                let _ = self
+                    .spot_directory
+                    .try_add_catalog_spot(*spot, prio, machine_id)?;
+                self.spot_directory.register_member(
+                    machine_id,
+                    char_name,
+                    Some(*spot),
+                    Some(*spot),
+                );
+            }
+            Command::AddFriendlyChar { char_name } => {
+                self.spot_directory.add_friendly_char(char_name)?;
+            }
+            Command::RemoveFriendlyChar { char_name } => {
+                self.spot_directory.remove_friendly_char(char_name);
+            }
             _ => {}
         }
         self.seq += 1;
@@ -501,6 +655,7 @@ impl CentralHub {
         } else {
             EventSeverity::Info
         };
+        let msg = custom_msg.unwrap_or_else(|| cmd.summary_pt());
         self.push_event(
             now_mono_ms,
             now_utc_s,
@@ -508,8 +663,9 @@ impl CentralHub {
             "PAINEL-DESKTOP",
             None,
             "Comando do Operador",
-            cmd.summary_pt(),
-        )
+            msg.clone(),
+        );
+        Ok(msg)
     }
 
     fn build_machine_view(

@@ -35,12 +35,13 @@ O desenvolvimento do **ZenGravity** é organizado em fases incrementais e verifi
 - [x] Máquina de trava de RAM somente leitura (`ReadProcessMemory`, apenas `PROCESS_VM_READ`) para Zen (`u32`) e HP (`u16`) com persistência de travas por `(pid, process_start_time, char_name)` em `data/ram_locks.json`.
 - [x] Leitura da lista de objetos próximos (`0x598` stride: jogadores, monstros, NPCs e Golden Monsters) e verificação de conexão TCP, exibindo tudo ao vivo no `zengravity-desktop.exe` com **`🛡 MODO REAL — SOMENTE LEITURA (MainMU.exe)`** e carregamento direto dos terrenos `Data\WorldN\EncTerrainN.att` de `C:\The Classic Games\The Classic MU\Data`.
 
-## Fase 3 — Catálogo Coordenado de Spots e Atalhos F1/F2 no Jogo
-*Próxima fase recomendada (não executada ainda).*
-- [ ] Captura física dos atalhos `F1` (spot principal) e `F2` (catálogo) com janela em foco.
-- [ ] Persistência e sincronização multi-PC do diretório de spots, reservas (`leases`), `friendly_chars` e visualização de cobertura/ocupação real no Mapa 2D do desktop.
+## Fase 3 — Catálogo Coordenado de Spots e Atalhos F1/F2 no Jogo (Concluída nesta entrega)
+- [x] Captura passiva e segura dos atalhos físicos `F1` (spot principal do personagem) e `F2` (catálogo do mapa) via hook de teclado `WH_KEYBOARD_LL` quando a janela do MU Online está em primeiro plano, ignorando teclas sintéticas/injetadas, repetição por tecla segurada (`KeyHoldTracker`) e modificadores (`Alt`/`Ctrl`/`Shift`).
+- [x] Regras de validação e distância de caminhada real: rejeição de catalogação na cidade de Lorencia, deduplicação no raio de chegada (`<= 2 tiles`), bloqueio de spots muito próximos (`3..=8 tiles` / `OWN_SPACING`) para evitar disputa mútua de Helper (KS), e ordenação automática de busca pela distância de caminhada BFS a partir da Safe Zone/entrada do mapa (`WorldId::arrival_entry_tiles`).
+- [x] Persistência atômica e sincronização multi-PC do diretório de spots (`data/spots_directory.json`), reservas com expiração (`leases`), lista de amigos/guild (`friendly_chars`) e editor tático interativo no Mapa 2D do `zengravity-desktop.exe` (clique em qualquer tile para inspecionar distância da Safe Zone, catalogar `F2`, fixar `F1`, remover spot ou gerenciar `Friendly Chars` e políticas de fallback).
 
 ## Fase 4 — Agendador de Entrada Física e Navegação Supervisionada
+*Próxima fase recomendada (não executada ainda).*
 - [ ] Implementação Win32 do `InputSessionScheduler` (1 rotina por PC por vez, guarda contra pânico, verificação de foco/PID antes de cada passo, gancho `F8` de parada imediata e badge discreto).
 - [ ] Caminhada supervisionada por A* com vigia de progresso (`NavTuning`), desvio local de mobs e retorno automático ao spot após morte ou DC.
 - [ ] Busca manual (`"Procurar spot agora"` com seletor de mapa) e fallback configurável (Mapa Original → Arena → Alternativos, com reavaliação periódica sem sobrescrever o `F1`).

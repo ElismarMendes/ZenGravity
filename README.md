@@ -6,6 +6,7 @@
 > - **Fase 0** (Auditoria e Arquitetura): Concluída.
 > - **Fase 1** (Painel Desktop Nativo `zengravity-desktop.exe` + Central Reativa + Simulador Multi-PC): Concluída.
 > - **Fase 2** (Leitores Reais do Windows em Modo Somente Leitura + Terrenos Reais `EncTerrain*.att` de `C:\The Classic Games\The Classic MU\Data` + 127 Fixtures Reais): Concluída.
+> - **Fase 3** (Catálogo Coordenado de Spots, Atalhos Passivos `F1`/`F2` no Jogo, Ordenação por Distância de Caminhada da Safe Zone, `Friendly Chars` e Editor Interativo no Mapa 2D): Concluída.
 > - **Alternância Ao Vivo no Desktop:** o painel detecta automaticamente janelas `MainMU.exe` abertas na sessão do usuário e permite alternar com 1 clique no topo entre **`🛡 MODO REAL — SOMENTE LEITURA (MainMU.exe)`** e **`⚡ MODO SIMULAÇÃO (4 PCs / 9 Personagens)`**, sem enviar nenhum comando de mouse ou teclado ao jogo.
 
 ---

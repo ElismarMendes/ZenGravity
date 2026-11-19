@@ -9,6 +9,7 @@
 //!   travas de RAM (`LockMachine` + `HpLock` + `DeathDetector`).
 //! - `InputSessionScheduler`: garantia de 1 única sessão física de teclado/mouse por PC e F8.
 
+pub mod hotkey_watcher;
 pub mod image;
 pub mod live_collector;
 pub mod terrain_loader;

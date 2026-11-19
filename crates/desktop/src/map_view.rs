@@ -21,6 +21,7 @@ use zengravity_core::lifecycle::CharLifecycleState;
 use zengravity_core::map::{WorldId, MAP_SIZE};
 use zengravity_core::spots::{SpotCoord, SpotOccupancyStatus};
 use zengravity_core::OCCUPIED_RADIUS;
+use zengravity_protocol::Command;
 
 pub struct Map2DViewport {
     pub selected_world: WorldId,
@@ -34,6 +35,8 @@ pub struct Map2DViewport {
     pub show_routes: bool,
     pub show_entities: bool,
     pub hovered_tile: Option<(i32, i32)>,
+    pub clicked_tile: Option<(i32, i32)>,
+    pub new_friendly_input: String,
     pub terrain_loader: ClientTerrainLoader,
 }
 
@@ -49,6 +52,8 @@ impl Default for Map2DViewport {
             show_routes: true,
             show_entities: true,
             hovered_tile: None,
+            clicked_tile: Some((123, 233)),
+            new_friendly_input: String::new(),
             terrain_loader: ClientTerrainLoader::discover(None),
         }
     }
@@ -85,7 +90,8 @@ impl Map2DViewport {
         ui: &mut Ui,
         state: &DesktopClientState,
         selected_char: &mut Option<String>,
-    ) {
+    ) -> Vec<Command> {
+        let mut commands = Vec::new();
         // Barra superior de controles do Mapa 2D
         ui.horizontal_wrapped(|ui| {
             ui.label(
@@ -161,7 +167,7 @@ impl Map2DViewport {
         ui.add_space(6.0);
 
         let avail = ui.available_size();
-        let canvas_height = (avail.y - 36.0).max(280.0);
+        let canvas_height = (avail.y - 235.0).max(240.0);
         let (response, painter) =
             ui.allocate_painter(Vec2::new(avail.x, canvas_height), Sense::click_and_drag());
         let rect = response.rect;
@@ -454,6 +460,26 @@ impl Map2DViewport {
             }
         }
 
+        // 6) Mira do tile selecionado com clique no mapa
+        if let Some((cx, cy)) = self.clicked_tile {
+            let cp = self.tile_to_screen(rect, cx as f32, cy as f32);
+            if rect.contains(cp) {
+                painter.circle_stroke(
+                    cp,
+                    8.0,
+                    Stroke::new(1.8_f32, Color32::from_rgb(255, 230, 80)),
+                );
+                painter.line_segment(
+                    [Pos2::new(cp.x - 11.0, cp.y), Pos2::new(cp.x + 11.0, cp.y)],
+                    Stroke::new(1.4_f32, Color32::from_rgb(255, 230, 80)),
+                );
+                painter.line_segment(
+                    [Pos2::new(cp.x, cp.y - 11.0), Pos2::new(cp.x, cp.y + 11.0)],
+                    Stroke::new(1.4_f32, Color32::from_rgb(255, 230, 80)),
+                );
+            }
+        }
+
         // Contorno do mundo 0..=255
         painter.rect_stroke(
             world_rect,
@@ -462,7 +488,7 @@ impl Map2DViewport {
             egui::StrokeKind::Middle,
         );
 
-        // Rodapé do Mapa 2D com coordenadas sob o cursor e legenda
+        // Rodapé do Mapa 2D com coordenadas sob o cursor, mira clicada e ações rápidas F1/F2
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if let Some((tx, ty)) = self.hovered_tile {
@@ -478,18 +504,224 @@ impl Map2DViewport {
                 );
             } else {
                 ui.label(
-                    egui::RichText::new("Arraste para mover o mapa | Roda do mouse para Zoom")
+                    egui::RichText::new("Arraste para mover | Roda do mouse: Zoom | Clique num tile para selecionar")
                         .color(Color32::from_rgb(150, 160, 175)),
                 );
             }
-            ui.separator();
-            ui.colored_label(Color32::from_rgb(45, 215, 125), "● Nosso Char (Farmando)");
-            ui.colored_label(Color32::from_rgb(245, 185, 55), "● Em Rota A*");
-            ui.colored_label(Color32::from_rgb(255, 215, 40), "★ Golden Monster");
-            ui.colored_label(Color32::from_rgb(225, 95, 95), "● Monstro");
-            ui.colored_label(Color32::from_rgb(90, 220, 190), "■ NPC");
-            ui.colored_label(Color32::from_rgb(125, 135, 150), "□ Spot Não Observado");
+
+            if let Some((cx, cy)) = self.clicked_tile {
+                let target_spot = SpotCoord::new(self.selected_world, cx, cy);
+                let walk_steps = terrain.walking_distance_from_entry(cx, cy);
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "🎯 Tile: {} ({cx}, {cy}) [{}]",
+                        self.selected_world.name(),
+                        walk_steps
+                            .map(|d| format!("{d} passos da Safe"))
+                            .unwrap_or_else(|| "Bloqueado".into())
+                    ))
+                    .strong()
+                    .color(Color32::from_rgb(255, 225, 95)),
+                );
+
+                if ui.button("📌 Catalogar Spot (F2)").clicked() {
+                    commands.push(Command::AddCatalogSpot { spot: target_spot });
+                }
+
+                if let Some(sel_name) = selected_char.as_ref() {
+                    if let Some(ch_view) = state.characters.get(sel_name) {
+                        if ui
+                            .button(format!("🏠 Definir como F1 de {sel_name}"))
+                            .clicked()
+                        {
+                            commands.push(Command::AssignHomeSpot {
+                                machine_id: ch_view.machine_id.clone(),
+                                char_name: ch_view.name.clone(),
+                                spot: target_spot,
+                            });
+                        }
+                    }
+                }
+            }
         });
+
+        ui.add_space(6.0);
+        ui.separator();
+
+        // Painel Inferior Fase 3: Catálogo Ordenado por Distância da Safe Zone + Friendly Chars
+        ui.columns(2, |cols| {
+            // Coluna 1: Catálogo de Spots deste Mapa com distância BFS real do EncTerrainN.att
+            cols[0].label(
+                egui::RichText::new(format!(
+                    "CATÁLOGO DE SPOTS EM {} (ORDEM DE BUSCA PELA DISTÂNCIA DA SAFE ZONE)",
+                    self.selected_world.name().to_uppercase()
+                ))
+                .small()
+                .strong()
+                .color(Color32::from_rgb(130, 185, 245)),
+            );
+            cols[0].add_space(3.0);
+
+            let mut world_entries: Vec<_> = state
+                .spot_directory
+                .catalog
+                .iter()
+                .filter(|c| c.spot.world == self.selected_world)
+                .map(|c| {
+                    let dist = terrain.walking_distance_from_entry(c.spot.x, c.spot.y);
+                    (c.clone(), dist)
+                })
+                .collect();
+            world_entries.sort_by_key(|(c, d)| (d.unwrap_or(u32::MAX), c.priority, c.spot.x, c.spot.y));
+
+            egui::ScrollArea::vertical()
+                .id_salt("map_catalog_table_scroll")
+                .max_height(135.0)
+                .show(&mut cols[0], |ui| {
+                    if world_entries.is_empty() {
+                        ui.label("Nenhum spot catalogado neste mapa. Clique num tile acima e aperte 'Catalogar Spot (F2)'.");
+                    } else {
+                        egui::Grid::new("map_catalog_grid")
+                            .num_columns(5)
+                            .striped(true)
+                            .spacing([10.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.strong("#");
+                                ui.strong("Coordenada");
+                                ui.strong("Passos da Safe");
+                                ui.strong("Ocupação / Dono");
+                                ui.strong("Ações");
+                                ui.end_row();
+
+                                for (idx, (entry, dist_opt)) in world_entries.iter().enumerate() {
+                                    ui.label(format!("#{}", idx + 1));
+                                    ui.monospace(format!("({}, {})", entry.spot.x, entry.spot.y));
+                                    ui.label(
+                                        dist_opt
+                                            .map(|d| format!("{d} tiles"))
+                                            .unwrap_or_else(|| "Sem rota".into()),
+                                    );
+
+                                    let occ = state.spot_directory.occupancy_status(
+                                        entry.spot,
+                                        now_mono_s,
+                                        20,
+                                    );
+                                    match occ {
+                                        SpotOccupancyStatus::OwnedByUs { char_name, machine } => {
+                                            ui.colored_label(
+                                                Color32::from_rgb(80, 200, 255),
+                                                format!("Nosso: {char_name} ({machine})"),
+                                            );
+                                        }
+                                        SpotOccupancyStatus::ConfirmedFree { observed_by, age_s } => {
+                                            ui.colored_label(
+                                                Color32::from_rgb(75, 225, 135),
+                                                format!("Livre (visto por {observed_by} há {age_s}s)"),
+                                            );
+                                        }
+                                        SpotOccupancyStatus::OccupiedByForeign { players, .. } => {
+                                            ui.colored_label(
+                                                Color32::from_rgb(250, 95, 95),
+                                                format!("Ocupado: {}", players.join(", ")),
+                                            );
+                                        }
+                                        SpotOccupancyStatus::Unobserved => {
+                                            ui.colored_label(
+                                                Color32::from_rgb(145, 155, 170),
+                                                "Não Observado",
+                                            );
+                                        }
+                                    }
+
+                                    ui.horizontal(|ui| {
+                                        let toggle_lbl = if entry.enabled { "Ativo" } else { "Pulado" };
+                                        if ui.small_button(toggle_lbl).clicked() {
+                                            commands.push(Command::SetCatalogSpotEnabled {
+                                                spot: entry.spot,
+                                                enabled: !entry.enabled,
+                                            });
+                                        }
+                                        if ui.small_button("Focar").clicked() {
+                                            self.clicked_tile = Some((entry.spot.x, entry.spot.y));
+                                            self.focus_on_spot(entry.spot);
+                                        }
+                                        if ui.small_button("🗑").clicked() {
+                                            commands.push(Command::RemoveCatalogSpot {
+                                                spot: entry.spot,
+                                            });
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                });
+
+            // Coluna 2: Personagens Aliados (`friendly_chars`) e Regras de Espaçamento
+            cols[1].label(
+                egui::RichText::new("PERSONAGENS ALIADOS (FRIENDLY CHARS) & ESPAÇAMENTO")
+                    .small()
+                    .strong()
+                    .color(Color32::from_rgb(130, 185, 245)),
+            );
+            cols[1].add_space(3.0);
+            cols[1].label(
+                egui::RichText::new(
+                    "Personagens de todas as máquinas conectadas já são reconhecidos como aliados automaticamente. \
+                     Adicione abaixo amigos/contas extras para que não sejam contados como invasores no raio de 12 tiles.",
+                )
+                .small()
+                .color(Color32::from_rgb(175, 185, 200)),
+            );
+            cols[1].add_space(4.0);
+
+            cols[1].horizontal(|ui| {
+                ui.label("Novo Aliado:");
+                ui.text_edit_singleline(&mut self.new_friendly_input);
+                if ui.button("+ Adicionar").clicked() && !self.new_friendly_input.trim().is_empty() {
+                    commands.push(Command::AddFriendlyChar {
+                        char_name: self.new_friendly_input.trim().to_string(),
+                    });
+                    self.new_friendly_input.clear();
+                }
+            });
+
+            cols[1].add_space(4.0);
+            cols[1].horizontal_wrapped(|ui| {
+                if state.spot_directory.friendly_chars.is_empty() {
+                    ui.colored_label(
+                        Color32::from_rgb(145, 155, 170),
+                        "Nenhum aliado externo extra cadastrado (apenas os personagens do grupo).",
+                    );
+                } else {
+                    for friend in &state.spot_directory.friendly_chars {
+                        egui::Frame::NONE
+                            .fill(Color32::from_rgb(24, 34, 48))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(65, 115, 175)))
+                            .corner_radius(3.0)
+                            .inner_margin(egui::Margin::symmetric(6, 2))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(friend)
+                                            .strong()
+                                            .color(Color32::from_rgb(140, 215, 255)),
+                                    );
+                                    if ui.small_button("✖").clicked() {
+                                        commands.push(Command::RemoveFriendlyChar {
+                                            char_name: friend.clone(),
+                                        });
+                                    }
+                                });
+                            });
+                    }
+                }
+            });
+        });
+
+        commands
     }
 
     fn handle_canvas_interaction(&mut self, ui: &Ui, response: &Response, rect: Rect) {
@@ -499,6 +731,15 @@ impl Map2DViewport {
                 (self.center_tile.0 - delta.x / self.zoom_px_per_tile).clamp(0.0, 255.0);
             self.center_tile.1 =
                 (self.center_tile.1 - delta.y / self.zoom_px_per_tile).clamp(0.0, 255.0);
+        }
+
+        if response.clicked() {
+            if let Some(click_pos) = response.interact_pointer_pos() {
+                let (tx, ty) = self.screen_to_tile(rect, click_pos);
+                if (0..=255).contains(&tx) && (0..=255).contains(&ty) {
+                    self.clicked_tile = Some((tx, ty));
+                }
+            }
         }
 
         if let Some(hover_pos) = response.hover_pos() {

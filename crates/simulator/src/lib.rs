@@ -613,9 +613,12 @@ impl SimulatorEngine {
                 }
                 (false, format!("Personagem {char_name} não encontrado"))
             }
-            Command::SetCatalogSpotEnabled { .. } | Command::RelockTelemetry { .. } => {
-                (true, cmd.summary_pt())
-            }
+            Command::SetCatalogSpotEnabled { .. }
+            | Command::AddCatalogSpot { .. }
+            | Command::RemoveCatalogSpot { .. }
+            | Command::AddFriendlyChar { .. }
+            | Command::RemoveFriendlyChar { .. }
+            | Command::RelockTelemetry { .. } => (true, cmd.summary_pt()),
         }
     }
 
